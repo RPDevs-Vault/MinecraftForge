@@ -6,7 +6,8 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath 'net.minecraftforge.gradle:ForgeGradle:3.+'
+        classpath 'net.minecraftforge.gradle:ForgeGradle:3.0.197'
+        classpath 'net.minecraftforge.gradleutils:GradleUtils:1.0.24'
         classpath 'org.ow2.asm:asm:7.1'
         classpath 'org.ow2.asm:asm-tree:7.1'
         classpath 'com.github.jponge:lzma-java:1.3' //Needed to compress deobf data
@@ -37,6 +38,7 @@ import net.minecraftforge.gradle.patcher.task.ApplyBinPatches
 import net.minecraftforge.gradle.patcher.task.GenerateBinPatches
 import net.minecraftforge.gradle.patcher.task.TaskReobfuscateJar
 import net.minecraftforge.gradle.userdev.tasks.RenameJar
+import net.minecraftforge.gradleutils.ChangelogUtils
 import org.apache.tools.ant.filters.ReplaceTokens
 import de.undercouch.gradle.tasks.download.Download
 import org.gradle.plugins.ide.eclipse.model.SourceFolder
@@ -44,7 +46,7 @@ import org.objectweb.asm.ClassReader
 
 plugins {
     id 'net.minecrell.licenser' version '0.4'
-    id 'org.ajoberstar.grgit' version '3.1.1'
+    id 'org.ajoberstar.grgit' version '4.1.1'
     id 'de.undercouch.download' version '3.3.0'
     id 'com.github.ben-manes.versions' version '0.22.0'
 }
@@ -76,6 +78,10 @@ project(':mcp') {
         config = MC_VERSION + '-' + MCP_VERSION
         pipeline = 'joined'
     }
+}
+
+task createChangelog(type: net.minecraftforge.gradleutils.tasks.GenerateChangelogTask) {
+    startingCommit = '45da4f6910abe824aa487056276f6bf2fadb7f24'
 }
 
 project(':clean') {
@@ -124,7 +130,7 @@ project(':clean') {
     }
 }
 
-project(':forge') {    
+project(':forge') {
     evaluationDependsOn(':clean')
     apply plugin: 'java-library'
     apply plugin: 'maven-publish'
@@ -135,6 +141,10 @@ project(':forge') {
     
     compileJava.sourceCompatibility = compileJava.targetCompatibility = sourceCompatibility = targetCompatibility = '1.8' // Need this here so eclipse task generates correctly.
     group = 'net.minecraftforge'
+
+    tasks.withType(JavaCompile) {
+        options.encoding = 'UTF-8'
+    }
 
     sourceSets {
         main {
@@ -204,6 +214,7 @@ project(':forge') {
     }
 
     version = getVersion()
+    logger.lifecycle "Version: $version"
 
     patcher {
         exc = file("$rootDir/src/main/resources/forge.exc")
@@ -317,12 +328,9 @@ project(':forge') {
         rootProject.file('CREDITS.txt'),
         rootProject.file('LICENSE.txt'),
         rootProject.file('LICENSE-Paulscode IBXM Library.txt'),
-        rootProject.file('LICENSE-Paulscode SoundSystem CodecIBXM.txt')
+        rootProject.file('LICENSE-Paulscode SoundSystem CodecIBXM.txt'),
+        rootProject.file('build/changelog.txt')
     ]
-    
-    def changelog = rootProject.file('build/changelog.txt')
-    if (changelog.exists())
-        extraTxts += changelog
     
     // We apply the bin patches we just created to make a jar that is JUST our changes
     genClientBinPatches.tool = BINPATCH_TOOL
@@ -622,6 +630,7 @@ project(':forge') {
     universalJar {
         from(extraTxts)
         dependsOn(deobfDataLzma)
+        dependsOn(rootProject.createChangelog)
         from(deobfDataLzma.output){
             rename{"deobfuscation_data-${MC_VERSION}.lzma"}
         }
@@ -651,11 +660,11 @@ project(':forge') {
     }
     
     task downloadInstaller(type: DownloadMavenArtifact) {
-        artifact = 'net.minecraftforge:installer:2.1.+:shrunk'
+        artifact = 'net.minecraftforge:installer:2.2.7:fatjar'
         changing = true
     }
     
-    task installerJar(type: Zip, dependsOn: [downloadInstaller, installerJson, launcherJson, genClientBinPatches, genServerBinPatches, 'signUniversalJar']) {
+    task installerJar(type: Zip, dependsOn: [downloadInstaller, installerJson, launcherJson, genClientBinPatches, genServerBinPatches, 'signUniversalJar', rootProject.createChangelog]) {
         classifier = 'installer'
         extension = 'jar' //Needs to be Zip task to not override Manifest, so set extension
         destinationDir = file('build/libs')
@@ -694,7 +703,7 @@ project(':forge') {
         t.finalizedBy(tasks.getByName("sign${t.name.capitalize()}"))
     }
     
-    task makeMdk(type: Zip) {
+    task makeMdk(type: Zip, dependsOn: [rootProject.createChangelog]) {
         baseName = project.name
         classifier = 'mdk'
         version = project.version
@@ -834,10 +843,10 @@ project(':forge') {
         publications {
             mavenJava(MavenPublication) {
                 artifact universalJar
-                if (changelog.exists()) {
-                    artifact(changelog) {
-                        classifier = 'changelog'
-                    }
+                artifact(rootProject.createChangelog.outputFile) {
+                    builtBy rootProject.createChangelog
+                    classifier = 'changelog'
+                    extension = 'txt'
                 }
                 artifact installerJar
                 //TODO: installer-win
@@ -977,19 +986,21 @@ def getClasspath(project, libs, artifact) {
     return ret
 }
 
-task ciWriteBuildNumber << {
-    def file = file('src/main/java/net/minecraftforge/common/ForgeVersion.java');
-    def outfile = '';
-    def ln = '\n'; //Linux line endings because we're on git!
+task ciWriteBuildNumber {
+    doFirst {
+        def file = file('src/main/java/net/minecraftforge/common/ForgeVersion.java');
+        def outfile = '';
+        def ln = '\n'; //Linux line endings because we're on git!
 
-    file.eachLine{ String s ->
-        if (s.matches('^    public static final int buildVersion    = [\\d]+;\$'))
-            s = "    public static final int buildVersion    = ${project(':forge').BUILD_NUMBER};"
-        if (s.matches('^    public static final String mcVersion = "[^\\"]+";'))
-            s = "    public static final String mcVersion = \"${MC_VERSION}\";"
-        outfile += (s+ln);
+        file.eachLine{ String s ->
+            if (s.matches('^    public static final int buildVersion    = [\\d]+;\$'))
+                s = "    public static final int buildVersion    = ${project(':forge').BUILD_NUMBER};"
+            if (s.matches('^    public static final String mcVersion = "[^\\"]+";'))
+                s = "    public static final String mcVersion = \"${MC_VERSION}\";"
+            outfile += (s+ln);
+        }
+        file.write(outfile);
     }
-    file.write(outfile);
 }
 
 //evaluationDependsOnChildren()
