@@ -114,3 +114,13 @@ publishing {
         }
     }
 }
+
+// FML does not support loading exploded directories as mods.
+// Eclipse works fine because it merges classes and resources when debugging
+// IntelliJ used to work because FG2 forced the files to be jared during debugging.
+// Since FG3+ doesn't do that, we need to merge the sourcesets from gradle's side.
+sourceSets.each {
+    def dir = layout.buildDirectory.file("sourcesSets/$it.name").get().asFile
+    it.output.resourcesDir = dir
+    it.java.outputDir = dir
+}
