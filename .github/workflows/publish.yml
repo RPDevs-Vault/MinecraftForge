@@ -13,8 +13,9 @@ jobs:
     with:
       java: 8
       gradle_tasks: 'ciWriteBuildNumber setup build publish'
-      # We don't know the version number, because its in old format. So disable updating the website
-      # artifact_name: 'forge'
+      legacy_prefix: 14
+      legacy_build_number: 2848
+      artifact_name: 'forge'
     secrets:
       DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
       PROMOTE_ARTIFACT_WEBHOOK: ${{ secrets.PROMOTE_ARTIFACT_WEBHOOK }}
