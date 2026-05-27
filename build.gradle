@@ -41,8 +41,8 @@ fdtools {
     }
 }
 renamerTools {
-    configure('renamer') {
-        version = buildLibs.renamer.get().version
+    configure('classes') {
+        artifact = buildLibs.renamer.get().toString() + ':all'
     }
     configure('srg2source') {
         version = buildLibs.srg2source.get().version
@@ -179,6 +179,9 @@ dependencies {
     installer projects.lowcodelanguage
     installer projects.mclanguage
     installer projects.forgeTransformers
+    
+    // Remove when we bump to a version with no srg names, as this is needed to map srg->official at runtimes
+    installerextra("de.oceanlabs.mcp:mcp_config:${mcpBase.mcpVersion.get().toString()}:srg2off")
 
     // Get the zip file with csv's of srg->mapepd for Runtime SRG->Mapped reflection remapping
     // This is also only needed during dev time, and automatically added to the dep list by Mavenizer for userdev
@@ -391,9 +394,10 @@ final universalJar = tasks.register('universalJar', Jar) {
     jarSigner.sign(it)
 }
 
+final map2Tsrg = renamer.convert('map2Tsrg', mcpBase.map2Srg) // Remove when we bump renamer to version that supports gziped files (on MC version change)
 final reobfJar = renamer.classes('srgJar', tasks.named('jar', Jar)) {
     libraries.setFrom(configurations.compileClasspath)
-    mappings mcpBase.map2Srg
+    mappings map2Tsrg
     archiveClassifier = 'srg'
 }
 final universalJarSrg = tasks.register('universalJarSrg', Jar) {
@@ -495,18 +499,18 @@ forgedev.userdevCompatibility(minecraftVersion) {
 }
 
 // region Installer tasks, Not needed when we simplify the installer/remove obf
-final clientOfficial = renamer.classes('renameClientOfficial') {
-    additionalArgs = ['--ann-fix', '--ids-fix', '--src-fix', '--record-fix', '--strip-sigs', '--reverse']
-    input.fileProvider(minecraftFiles.client)
-    libraries = mcpBase.dependencyConfiguration
-    mappings minecraftFiles.clientMappings
+final renameOfficial = (side, inputProvider, mappingsProvider) -> {
+    renamer.classes('rename' + side + 'Official') {
+        additionalArgs = ['--ann-fix', '--ids-fix', '--src-fix', '--record-fix', '--strip-sigs', '--reverse']
+        input.fileProvider(inputProvider)
+        libraries = mcpBase.dependencyConfiguration
+        mappings mappingsProvider
+        output = layout.buildDirectory.file("libs/rename-${side.toLowerCase()}-official.jar")
+        logFile = layout.buildDirectory.file("libs/rename-${side.toLowerCase()}-official.log")
+    }
 }
-final serverOfficial = renamer.classes('renameServerOfficial') {
-    additionalArgs = ['--ann-fix', '--ids-fix', '--src-fix', '--record-fix', '--strip-sigs', '--reverse']
-    input.fileProvider(minecraftFiles.serverExtracted)
-    libraries = mcpBase.dependencyConfiguration
-    mappings minecraftFiles.serverMappings
-}
+final clientOfficial = renameOfficial('Client', minecraftFiles.client, minecraftFiles.clientMappings)
+final serverOfficial = renameOfficial('Server', minecraftFiles.serverExtracted, minecraftFiles.serverMappings)
 final clientBinPatches = forgedev.binaryPatches('client') {
     clean = clientOfficial.flatMap { it.output }
 }
@@ -594,7 +598,7 @@ forgedev.installer {
         data 'MC_UNPACKED_SHA', minecraftFiles.client, minecraftFiles.serverExtracted
 
         data 'MC_OFF', "[net.minecraft:client:${minecraftVersion}:official]", "[net.minecraft:server:${minecraftVersion}:official]"
-        data 'MC_OFF_SHA', clientOfficial.flatMap { it.output } ,serverOfficial.flatMap { it.output }
+        data 'MC_OFF_SHA', clientOfficial.flatMap { it.output }, serverOfficial.flatMap { it.output }
 
         data 'BINPATCH', '/data/client.lzma', '/data/server.lzma'
         data 'PATCHED', "[$projectArtifact:client]", "[$projectArtifact:server]"
@@ -673,7 +677,7 @@ forgedev.installer {
 }
 
 final mdkGradleWrapper = tasks.register('mdkGradleWrapper', Wrapper) {
-    gradleVersion = '9.3.1'
+    gradleVersion = '9.5.0'
     scriptFile = layout.buildDirectory.dir("wrapper/" + gradleVersion + "/gradlew")
     jarFile = layout.buildDirectory.dir("wrapper/" + gradleVersion + "/gradle/wrapper/gradle-wrapper.jar")
 }
